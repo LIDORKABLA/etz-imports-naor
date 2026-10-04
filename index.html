@@ -400,7 +400,7 @@ main{padding:6px 16px calc(env(safe-area-inset-bottom) + 108px)}
       <div class="field"><label for="f-cur">מטבע</label>
         <select id="f-cur" name="currency">
           <option value="ILS">שקל ₪</option><option value="USD">דולר $</option>
-          <option value="EUR">אירו €</option><option value="CNY">יואן ¥</option>
+          <option value="EUR">אירו €</option><option value="GBP">פאונד £</option><option value="CNY">יואן ¥</option>
         </select></div>
       <div class="field hidden" id="rateField"><label for="f-rate">שער לשקל</label>
         <div class="inline">
@@ -484,7 +484,7 @@ main{padding:6px 16px calc(env(safe-area-inset-bottom) + 108px)}
       <div class="field"><label for="c-cur">מטבע החשבונית</label>
         <select id="c-cur">
           <option value="ILS">שקל ₪</option><option value="USD">דולר $</option>
-          <option value="EUR">אירו €</option><option value="CNY">יואן ¥</option>
+          <option value="EUR">אירו €</option><option value="GBP">פאונד £</option><option value="CNY">יואן ¥</option>
         </select></div>
       <div class="field hidden" id="cRateField"><label for="c-rate">שער לשקל</label>
         <div class="inline">
@@ -648,7 +648,7 @@ main{padding:6px 16px calc(env(safe-area-inset-bottom) + 108px)}
 <script>
 const BACKUP_DAYS = 7;
 const AI_MODEL = 'claude-sonnet-5-5';
-const CUR = { ILS:'₪', USD:'$', EUR:'€', CNY:'¥' };
+const CUR = { ILS:'₪', USD:'$', EUR:'€', GBP:'£', CNY:'¥' };
 const DAY = 86400000;
 const $ = s => document.querySelector(s);
 let items = [], filterMode = 'all';
@@ -733,7 +733,7 @@ async function fetchJSON(url){
 async function fetchRate(cur){
   if (rateCache[cur] && Date.now() - rateCache[cur].at < 3600000) return rateCache[cur];
   let out = null;
-  if (cur === 'USD' || cur === 'EUR'){
+  if (cur === 'USD' || cur === 'EUR' || cur === 'GBP'){
     try {
       const d = await fetchJSON('https://boi.org.il/PublicApi/GetExchangeRates');
       const e = (d.exchangeRates || []).find(x => x.key === cur);
@@ -1528,7 +1528,7 @@ const AI_SCHEMA = {
     supplier: { type: 'string', description: 'Supplier / seller company name, empty if absent' },
     invoice_no: { type: 'string', description: 'Invoice, proforma or PI number, empty if absent' },
     invoice_date: { type: 'string', description: 'Invoice date as YYYY-MM-DD, empty if absent' },
-    currency: { type: 'string', enum: ['USD','EUR','CNY','ILS','OTHER'] },
+    currency: { type: 'string', enum: ['USD','EUR','GBP','CNY','ILS','OTHER'] },
     lines: {
       type: 'array',
       items: {
