@@ -258,6 +258,11 @@ main{padding:6px 16px calc(env(safe-area-inset-bottom) + 108px)}
 .panel-head h2{margin:0}
 .panel-head small{color:var(--muted);font-size:14px}
 .key-ok{color:var(--ok);font-weight:600}
+.viewer .vbody.as-sheet{display:block;background:#fff}
+.sheet-view{background:#fff;color:var(--ink);padding:14px;font-size:13px;direction:ltr;text-align:left}
+.sheet-view h3{font-family:var(--serif);margin:6px 0 8px;font-size:16px}
+.sheet-view table{border-collapse:collapse;direction:ltr;margin-bottom:18px}
+.sheet-view td{border:1px solid var(--line);padding:4px 8px;white-space:nowrap}
 .dlg{position:fixed;inset:0;z-index:150;background:rgba(15,22,18,.55);display:flex;align-items:center;justify-content:center;padding:20px}
 .dlg-card{background:var(--card);border-radius:20px;padding:20px 18px;width:100%;max-width:380px;box-shadow:0 20px 50px -20px rgba(0,0,0,.6)}
 .dlg-card h2{margin:0 0 14px;font-family:var(--serif);font-size:20px;color:var(--pine)}
@@ -438,7 +443,7 @@ main{padding:6px 16px calc(env(safe-area-inset-bottom) + 108px)}
       </div>
       <div id="invNew" class="note hidden"><svg class="ic"><use href="#i-check"/></svg><span>חשבונית חדשה נבחרה. היא תישמר בלחיצה על שמור.</span></div>
       <input type="file" id="invCam" accept="image/*" capture="environment" class="hidden">
-      <input type="file" id="invFile" accept="image/*,application/pdf" class="hidden">
+      <input type="file" id="invFile" accept="image/*,application/pdf,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" class="hidden">
     </div>
 
     <div class="panel">
@@ -466,7 +471,7 @@ main{padding:6px 16px calc(env(safe-area-inset-bottom) + 108px)}
         <button type="button" class="smallbtn grow" id="cPickBtn"><svg class="ic"><use href="#i-clip"/></svg>בחר קבצים</button>
       </div>
       <input type="file" id="cCam" accept="image/*" capture="environment" class="hidden">
-      <input type="file" id="cPick" accept="image/*,application/pdf" multiple class="hidden">
+      <input type="file" id="cPick" accept="image/*,application/pdf,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" multiple class="hidden">
       <button type="button" class="btn ai" id="aiBtn"><svg class="ic"><use href="#i-spark"/></svg><span class="lbl">קרא פריטים מהחשבונית</span></button>
       <div class="ai-note">הפריטים נקראים מהחשבונית ומתורגמים לעברית. עבור עליהם לפני השמירה.</div>
     </div>
@@ -1209,11 +1214,26 @@ async function compressImage(file){
     return blob && blob.size < file.size ? blob : file;
   } catch(e){ return file; }
 }
+// זיהוי סוג לפי סיומת, כי חלק מהמכשירים לא מוסרים סוג לקבצי אקסל
+const EXT_TYPES = { xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls:'application/vnd.ms-excel',
+  csv:'text/csv', pdf:'application/pdf', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', webp:'image/webp', heic:'image/heic' };
+const extOf = n => (String(n || '').split('.').pop() || '').toLowerCase();
+const isSheet = f => ['xlsx','xls','csv'].includes(extOf(f.name)) || /spreadsheet|ms-excel|text\/csv/.test(f.type || '');
 async function toStored(file){
   const blob = await compressImage(file);
   let name = file.name || 'invoice';
   if (blob !== file && blob.type === 'image/jpeg') name = name.replace(/\.\w+$/, '') + '.jpg';
-  return { id: uid(), name, type: blob.type || file.type || 'application/octet-stream', blob };
+  const type = (blob !== file && blob.type) || file.type || EXT_TYPES[extOf(name)] || 'application/octet-stream';
+  return { id: uid(), name, type, blob };
+}
+// הופך גיליון לטקסט שאפשר לשלוח לקריאה
+async function sheetToText(f){
+  const X = await loadXlsx();
+  const wb = X.read(new Uint8Array(await f.blob.arrayBuffer()), { type:'array', cellDates:true });
+  return wb.SheetNames.map(n => {
+    const csv = X.utils.sheet_to_csv(wb.Sheets[n], { blankrows:false, strip:true }).replace(/^[,\s]+$/gm, '').replace(/\n{2,}/g, '\n').trim();
+    return csv ? `--- Sheet: ${n} ---\n${csv}` : '';
+  }).filter(Boolean).join('\n\n');
 }
 
 form.addEventListener('submit', async e => {
@@ -1536,6 +1556,7 @@ Extract every product line, in order, without skipping or merging lines. Skip sh
 For each line give a short, natural Hebrew product name (name_he) as an Israeli tools store would write it, keeping model numbers, sizes and units unchanged.
 Quantities must be in single pieces. If only cartons and pieces-per-carton are given, multiply. If the unit price is missing but the line total and quantity exist, divide.
 Separate the manufacturer model number (model) from the supplier's own item code (sku). If there is only one code and it looks like a brand model number, put it in model.
+Spreadsheets arrive as CSV text; use the header row to understand the columns, and ignore subtotal and summary rows.
 Leave a field empty when it is not on the document. Never invent barcodes, models or codes.
 Return the result as JSON matching the schema.`;
 
@@ -1548,11 +1569,20 @@ async function aiExtract(){
   if (!cont.files.length){ toast('הוסף קודם צילום או קובץ של החשבונית'); return; }
   const blocks = []; let size = 0;
   for (const f of cont.files){
+    if (isSheet(f)){
+      let txt;
+      try { txt = await sheetToText(f); }
+      catch(e){ toast('לא הצלחתי לפתוח את קובץ האקסל. בדוק חיבור לאינטרנט.', 4000); return; }
+      if (!txt){ toast(`הקובץ ${f.name} ריק`); continue; }
+      size += txt.length;
+      blocks.push({ type:'text', text: `Spreadsheet file "${f.name}" (converted to CSV):\n${txt}` });
+      continue;
+    }
     const data = await blobToB64(f.blob); size += data.length;
     if (f.type === 'application/pdf') blocks.push({ type:'document', source:{ type:'base64', media_type:'application/pdf', data } });
     else if (['image/jpeg','image/png','image/webp','image/gif'].includes(f.type)) blocks.push({ type:'image', source:{ type:'base64', media_type:f.type, data } });
   }
-  if (!blocks.length){ toast('סוג הקובץ לא נתמך. השתמש בתמונה או בקובץ מסמך'); return; }
+  if (!blocks.length){ toast('סוג הקובץ לא נתמך. השתמש בתמונה, קובץ מסמך או אקסל'); return; }
   if (size > 30e6){ toast('הקבצים גדולים מדי. צלם פחות עמודים בכל פעם', 4000); return; }
   blocks.push({ type:'text', text: AI_PROMPT });
 
@@ -1634,6 +1664,17 @@ let viewing = null, viewUrl = null;
 function openViewer(inv){
   if (!inv || !inv.blob) return;
   viewing = inv; viewUrl = URL.createObjectURL(inv.blob);
+  $('#vbody').classList.toggle('as-sheet', isSheet(inv));
+  if (isSheet(inv)){
+    $('#vbody').innerHTML = '<div class="sheet-view">טוען…</div>';
+    $('#viewer').classList.remove('hidden');
+    loadXlsx().then(async X => {
+      const wb = X.read(new Uint8Array(await inv.blob.arrayBuffer()), { type:'array' });
+      $('#vbody').innerHTML = '<div class="sheet-view">' + wb.SheetNames.map(n =>
+        `<h3>${esc(n)}</h3>` + X.utils.sheet_to_html(wb.Sheets[n], { header:'', footer:'' })).join('') + '</div>';
+    }).catch(() => { $('#vbody').innerHTML = '<div class="sheet-view">אין חיבור. לחץ "שתף או שמור" כדי לפתוח באקסל.</div>'; });
+    return;
+  }
   $('#vbody').innerHTML = inv.type.startsWith('image/') ? `<img src="${viewUrl}" alt="">` : `<iframe src="${viewUrl}" title="חשבונית"></iframe>`;
   $('#viewer').classList.remove('hidden');
 }
